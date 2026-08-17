@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual YouTube Player + DJ Tools</title>
+    <!-- CORRECCIÓN Error 153 de YouTube: el reproductor necesita que el navegador
+         envíe una cabecera "Referer" válida para poder inicializar su configuración.
+         Sin esto (muy común al abrir el archivo directo desde el disco con file://,
+         o con ciertos bloqueadores de privacidad) YouTube responde con el error
+         "153: Error de configuración del reproductor de vídeo". -->
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* --- RESET Y BASE --- */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background-color: #0f0f0f;
+            color: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden; /* ya no ocultamos overflow-y: el layout ahora puede crecer y hacer scroll */
+        }
+        /* --- HEADER --- */
+        header {
+            background-color: #0f0f0f;
+            padding: 6px 18px;
+            border-bottom: 1px solid #222;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px 12px;
+            flex-shrink: 0;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #ff0000;
+        }
+        .logo i { font-size: 1.3rem; }
+        .header-tools {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .header-tools span {
+            font-size: 0.7rem;
+            color: #aaa;
+            background: #1a1a1a;
+            padding: 2px 10px;
+            border-radius: 30px;
+            border: 1px solid #333;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .header-tools i { color: #ff0000; }
+        .api-key-box {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 30px;
+            padding: 2px 4px 2px 10px;
+        }
+        .api-key-box i.fa-key { color: #ffd166; font-size: 0.7rem; }
+        .api-key-box input {
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #eee;
+            font-size: 0.68rem;
+            width: 150px;
+        }
+        .api-key-box input::placeholder { color: #777; }
+        .api-key-box button {
+            background: #282828;
+            border: none;
+            color: #ddd;
+            font-size: 0.65rem;
+            padding: 3px 9px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
+        .api-key-box button:hover { background: #3a3a3a; }
+        .api-key-box .info-btn { padding: 3px 7px; }
+        .api-key-box .info-btn i { color: #6fb8ff; }
+        .api-key-status {
+            font-size: 0.62rem;
+            color: #4ade80;
+            padding: 0 4px;
+            display: none;
+        }
+
+        /* --- MAIN --- */
+        .main-wrap {
+            display: flex;
+            flex-direction: column;
+            flex: 1 0 auto;
+            padding: 4px 8px 14px 8px;
+            gap: 10px;
+        }
+
+        /* --- FILA DE VIDEOS --- */
+        .video-row {
+            display: flex;
+            gap: 6px;
+        }
+
+        /* --- CADA LADO: timer + video + pitch (en fila) --- */
+        .video-side {
+            flex: 1;
+            display: flex;
+            gap: 4px;
+            min-width: 0;
+            align-items: stretch; /* así el video crece para igualar el alto de los sliders largos */
+        }
+        .video-side .side-vertical {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            background: #161616;
+            border-radius: 8px;
+            padding: 10px 4px;
+            flex-shrink: 0;
+            width: 64px;
+            min-width: 52px;
+            border: 1px solid #2a2a2a;
+        }
+        .video-side .side-vertical .ctrl-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+        }
+        .video-side .side-vertical .ctrl-item label {
+            font-size: 0.5rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }
+        .video-side .side-vertical .ctrl-item label i { font-size: 0.55rem; color: #ff0000; }
+
+        /* --- CORRECCIÓN: slider vertical con contenedor de tamaño fijo real ---
+           Antes: el input se rotaba con transform pero el espacio reservado en el
+           layout seguía siendo el de un slider horizontal de 80px, así que al
+           agrandarlo se habría superpuesto con el resto del contenido.
+           Ahora: un "slider-wrap" reserva exactamente el alto vertical deseado
+           (3x el largo original = 240px) y el input, ya rotado, se centra dentro. */
+        .video-side .side-vertical .ctrl-item .slider-wrap {
+            position: relative;
+            width: 34px;
+            height: 240px; /* triple del largo original (~80px) */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .video-side .side-vertical .ctrl-item input[type="range"] {
+            position: absolute;
+            -webkit-appearance: none;
+            appearance: none;
+            width: 240px;
+            height: 6px;
+            background: #333;
+            border-radius: 4px;
+            outline: none;
+            transform: rotate(-90deg);
+            margin: 0;
+        }
+        .video-side .side-vertical .ctrl-item input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #ff0000;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #fff;
+        }
+        .video-side .side-vertical .ctrl-item input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #ff0000;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #fff;
+        }
+        .video-side .side-vertical .ctrl-value {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: #ff6b6b;
+            text-align: center;
+            min-height: 16px;
+        }
+        .video-side .side-vertical .dj-btn {
+            background: #282828;
+            border: none;
+            color: #ddd;
+            padding: 4px 8px;
+            border-radius: 16px;
+            font-size: 0.58rem;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            justify-content: center;
+            width: 100%;
+        }
+        .video-side .side-vertical .dj-btn.active { background: #ff0000; color: #fff; }
+        .video-side .side-vertical .dj-btn:hover { background: #3a3a3a; }
+        .video-side .side-vertical .dj-btn.active:hover { background: #cc0000; }
+        .video-side .side-vertical .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 100%;
+        }
+
+        /* --- COLUMNA DEL VIDEO --- */
+        .video-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #111;
+            border-radius: 8px;
+            border: 1px solid #222;
+            overflow: hidden;
+            min-width: 0;
+        }
+        .video-col-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 3px 10px;
+            background: #181818;
+            border-bottom: 1px solid #2a2a2a;
+            flex-shrink: 0;
+        }
+        .video-col-header .title {
+            font-size: 0.75rem;
+            color: #ddd;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .video-col-header .title i { color: #ff0000; font-size: 0.75rem; }
+        .video-col-header .badge {
+            font-size: 0.5rem;
+            background: #ff000033;
+            color: #ff6b6b;
+            padding: 1px 6px;
+            border-radius: 30px;
+        }
+
+        .video-container {
+            flex: 1;
+            background: #000;
+            position: relative;
+            min-height: 260px;
+        }
+        .video-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+        .video-placeholder {
+            text-align: center;
+            color: #888;
+            padding: 12px 8px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 0.7rem;
+        }
+        .video-placeholder i { font-size: 1.6rem; margin-bottom: 3px; color: #ff0000; }
+        .video-info {
+            position: absolute;
+            bottom: 3px;
+            left: 5px;
+            right: 5px;
+            background: rgba(0,0,0,0.75);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.55rem;
+            color: #ddd;
+            display: none;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* --- BUSCADOR (debajo del video) --- */
+        .search-container {
+            background: #1a1a1a;
+            padding: 3px 8px;
+            border-top: 1px solid #2a2a2a;
+            flex-shrink: 0;
+        }
+        .search-box {
+            display: flex;
+            gap: 3px;
+        }
+        .search-box input {
+            flex: 1;
+            padding: 3px 8px;
+            border: 1px solid #333;
+            background: #0f0f0f;
+            color: #fff;
+            border-radius: 16px 0 0 16px;
+            font-size: 0.65rem;
+            min-width: 0;
+        }
+        .search-box button {
+            padding: 3px 10px;
+            background: #ff0000;
+            color: #fff;
+            border: none;
+            border-radius: 0 16px 16px 0;
+            cursor: pointer;
+            font-size: 0.65rem;
+        }
+        .search-box button:hover { background: #cc0000; }
+        .search-results {
+            max-height: 60px;
+            overflow-y: auto;
+            margin-top: 2px;
+        }
+        .result-item {
+            padding: 2px 6px;
+            background: #222;
+            margin-bottom: 1px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 0.65rem;
+        }
+        .result-item:hover { background: #333; }
+        .result-title { font-weight: bold; color: #fff; }
+        .result-channel { font-size: 0.5rem; color: #aaa; }
+        .search-results::-webkit-scrollbar { width: 3px; }
+        .search-results::-webkit-scrollbar-thumb { background: #ff0000; border-radius: 4px; }
+        .search-results::-webkit-scrollbar-track { background: #1a1a1a; }
+
+        /* --- FILA DE CONTROLES GLOBALES (EQ izq + Crossfader + EQ der) --- */
+        .global-controls {
+            display: flex;
+            gap: 8px;
+            background: #121212;
+            border-radius: 8px;
+            border: 1px solid #222;
+            padding: 6px 12px;
+            flex-shrink: 0;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* EQ de cada lado */
+        .eq-side {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            padding: 0 4px;
+        }
+        .eq-side .eq-label {
+            font-size: 0.5rem;
+            color: #888;
+            text-transform: uppercase;
+            writing-mode: vertical-lr;
+            letter-spacing: 0.5px;
+            margin-right: 2px;
+        }
+        .eq-side .eq-note {
+            font-size: 0.42rem;
+            color: #666;
+            max-width: 46px;
+            line-height: 1.15;
+        }
+        .eq-side .eq-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+        }
+        .eq-side .eq-item label {
+            font-size: 0.45rem;
+            color: #aaa;
+            text-transform: uppercase;
+        }
+        /* --- CORRECCIÓN: "writing-mode: bt-lr" no es una propiedad CSS válida,
+           así que el fader de EQ nunca fue realmente vertical. Se reemplaza por
+           el mismo patrón de wrapper + rotate que el timer/pitch. --- */
+        .eq-side .eq-item .eq-slider-wrap {
+            position: relative;
+            width: 22px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .eq-side .eq-item input[type="range"] {
+            position: absolute;
+            -webkit-appearance: none;
+            appearance: none;
+            width: 70px;
+            height: 5px;
+            background: #1a1a1a;
+            border-radius: 5px;
+            outline: none;
+            transform: rotate(-90deg);
+        }
+        .eq-side .eq-item input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #ff0000;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        .eq-side .eq-item input[type="range"]::-moz-range-thumb {
+            width: 12px;
+            height: 12px;
+            background: #ff0000;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        .eq-side .eq-item .eq-val {
+            font-size: 0.5rem;
+            color: #ff6b6b;
+            font-weight: 600;
+        }
+        .eq-reset-btn {
+            background: #282828;
+            border: none;
+            color: #ddd;
+            padding: 2px 8px;
+            border-radius: 16px;
+            font-size: 0.5rem;
+            cursor: pointer;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+            white-space: nowrap;
+        }
+        .eq-reset-btn:hover { background: #3a3a3a; }
+
+        /* Crossfader central */
+        .crossfade-area {
+            flex: 1.2;
+            min-width: 120px;
+            padding: 0 8px;
+            border-left: 1px solid #2a2a2a;
+            border-right: 1px solid #2a2a2a;
+        }
+        .crossfade-area .cross-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.55rem;
+            color: #888;
+            margin-bottom: 1px;
+        }
+        .crossfade-area .volume-slider {
+            width: 100%;
+            -webkit-appearance: none;
+            height: 5px;
+            background: #333;
+            border-radius: 4px;
+            outline: none;
+        }
+        .crossfade-area .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #ff0000;
+        }
+        .crossfade-area .volume-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #ff0000;
+        }
+        .crossfade-area .volume-display {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.6rem;
+            color: #ccc;
+            margin-top: 1px;
+        }
+        .crossfade-area .volume-display span { font-weight: bold; color: #ff6b6b; }
+
+        /* --- FOOTER --- */
+        footer {
+            padding: 3px 12px;
+            text-align: center;
+            background: #0a0a0a;
+            color: #555;
+            font-size: 0.6rem;
+            border-top: 1px solid #222;
+            flex-shrink: 0;
+        }
+
+        /* --- RESPONSIVE --- */
+        @media (max-width: 900px) {
+            .video-row { flex-direction: column; }
+            .video-side .side-vertical { width: 54px; min-width: 44px; padding: 8px 4px; }
+            .video-side .side-vertical .ctrl-item .slider-wrap { height: 180px; }
+            .video-side .side-vertical .ctrl-item input[type="range"] { width: 180px; }
+            .global-controls { flex-wrap: wrap; }
+        }
+        @media (max-width: 500px) {
+            header { flex-direction: column; align-items: stretch; text-align: center; }
+            .header-tools { justify-content: center; }
+            .video-side .side-vertical { width: 46px; min-width: 38px; padding: 6px 3px; }
+            .video-side .side-vertical .ctrl-item .slider-wrap { height: 140px; width: 28px; }
+            .video-side .side-vertical .ctrl-item input[type="range"] { width: 140px; }
+            .video-side .side-vertical .ctrl-item label { font-size: 0.42rem; }
+            .video-side .side-vertical .ctrl-value { font-size: 0.6rem; }
+            .eq-side .eq-item .eq-slider-wrap { width: 18px; height: 50px; }
+            .eq-side .eq-item input[type="range"] { width: 50px; }
+            .eq-side .eq-item label { font-size: 0.4rem; }
+            .eq-side .eq-item .eq-val { font-size: 0.4rem; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+    <div class="logo"><i class="fab fa-youtube"></i><span>Dual DJ</span></div>
+    <div class="header-tools">
+        <span><i class="fas fa-headphones"></i> Mix</span>
+        <span><i class="fas fa-arrows-alt-h"></i> Timer / Pitch</span>
+        <span><i class="fas fa-sliders-h"></i> EQ por canal</span>
+        <div class="api-key-box">
+            <i class="fas fa-key"></i>
+            <input type="password" id="yt-api-key" placeholder="Clave API de YouTube (opcional)">
+            <span class="api-key-status" id="api-key-status">Guardada ✓</span>
+            <button id="save-api-key-btn">Guardar</button>
+            <button class="info-btn" id="info-api-key-btn" title="¿Cómo consigo una clave?"><i class="fas fa-question-circle"></i></button>
+        </div>
+    </div>
+</header>
+
+<!-- MAIN -->
+<div class="main-wrap">
+    <!-- FILA DE VIDEOS -->
+    <div class="video-row">
+        <!-- Lado Izquierdo: timer (izq) + video + pitch (der) -->
+        <div class="video-side">
+            <!-- Timer vertical (izquierda) -->
+            <div class="side-vertical" id="left-timer">
+                <div class="ctrl-item">
+                    <label><i class="fas fa-stopwatch"></i> Timer</label>
+                    <div class="slider-wrap">
+                        <input type="range" class="timer-slider" min="0" max="60" value="0" step="1" data-side="left">
+                    </div>
+                    <span class="ctrl-value timer-value" id="timer-left-val">0s</span>
+                </div>
+                <div class="btn-group">
+                    <button class="dj-btn timer-toggle-btn" data-side="left"><i class="fas fa-play"></i> Iniciar</button>
+                    <button class="dj-btn loop-btn" data-side="left"><i class="fas fa-sync-alt"></i> Loop</button>
+                    <button class="dj-btn cue-btn" data-side="left" title="Clic: ir al cue · Mayús+Clic: fijar cue aquí"><i class="fas fa-flag"></i> Cue</button>
+                </div>
+            </div>
+
+            <!-- Video Izquierdo -->
+            <div class="video-col">
+                <div class="video-col-header">
+                    <span class="title"><i class="fas fa-film"></i> Izquierdo</span>
+                    <span class="badge" id="left-status">● LIVE</span>
+                </div>
+                <div class="video-container" id="video-left-container">
+                    <div class="video-placeholder">
+                        <i class="fab fa-youtube"></i>
+                        <p>Busca y reproduce</p>
+                    </div>
+                    <div class="video-info" id="video-left-info"></div>
+                </div>
+                <div class="search-container">
+                    <div class="search-box">
+                        <input type="text" class="search-input" id="search-left" placeholder="Buscar...">
+                        <button class="search-btn" id="search-btn-left"><i class="fas fa-search"></i></button>
+                    </div>
+                    <div class="search-results" id="results-left"></div>
+                </div>
+            </div>
+
+            <!-- Pitch vertical (derecha) -->
+            <div class="side-vertical" id="left-pitch">
+                <div class="ctrl-item">
+                    <label><i class="fas fa-arrow-up"></i> Pitch</label>
+                    <div class="slider-wrap">
+                        <input type="range" class="pitch-slider" min="-12" max="12" value="0" step="0.5" data-side="left">
+                    </div>
+                    <span class="ctrl-value pitch-value" id="pitch-left-val">0.0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lado Derecho: timer (izq) + video + pitch (der) -->
+        <div class="video-side">
+            <!-- Timer vertical (izquierda) -->
+            <div class="side-vertical" id="right-timer">
+                <div class="ctrl-item">
+                    <label><i class="fas fa-stopwatch"></i> Timer</label>
+                    <div class="slider-wrap">
+                        <input type="range" class="timer-slider" min="0" max="60" value="0" step="1" data-side="right">
+                    </div>
+                    <span class="ctrl-value timer-value" id="timer-right-val">0s</span>
+                </div>
+                <div class="btn-group">
+                    <button class="dj-btn timer-toggle-btn" data-side="right"><i class="fas fa-play"></i> Iniciar</button>
+                    <button class="dj-btn loop-btn" data-side="right"><i class="fas fa-sync-alt"></i> Loop</button>
+                    <button class="dj-btn cue-btn" data-side="right" title="Clic: ir al cue · Mayús+Clic: fijar cue aquí"><i class="fas fa-flag"></i> Cue</button>
+                </div>
+            </div>
+
+            <!-- Video Derecho -->
+            <div class="video-col">
+                <div class="video-col-header">
+                    <span class="title"><i class="fas fa-film"></i> Derecho</span>
+                    <span class="badge" id="right-status">● LIVE</span>
+                </div>
+                <div class="video-container" id="video-right-container">
+                    <div class="video-placeholder">
+                        <i class="fab fa-youtube"></i>
+                        <p>Busca y reproduce</p>
+                    </div>
+                    <div class="video-info" id="video-right-info"></div>
+                </div>
+                <div class="search-container">
+                    <div class="search-box">
+                        <input type="text" class="search-input" id="search-right" placeholder="Buscar...">
+                        <button class="search-btn" id="search-btn-right"><i class="fas fa-search"></i></button>
+                    </div>
+                    <div class="search-results" id="results-right"></div>
+                </div>
+            </div>
+
+            <!-- Pitch vertical (derecha) -->
+            <div class="side-vertical" id="right-pitch">
+                <div class="ctrl-item">
+                    <label><i class="fas fa-arrow-up"></i> Pitch</label>
+                    <div class="slider-wrap">
+                        <input type="range" class="pitch-slider" min="-12" max="12" value="0" step="0.5" data-side="right">
+                    </div>
+                    <span class="ctrl-value pitch-value" id="pitch-right-val">0.0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTROLES GLOBALES: EQ Izq + Crossfader + EQ Der -->
+    <div class="global-controls">
+        <!-- EQ Izquierdo -->
+        <div class="eq-side" id="eq-left">
+            <span class="eq-label">EQ Izq</span>
+            <div class="eq-item">
+                <label>Bajos</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="left" data-band="bass"></div>
+                <span class="eq-val" id="eq-left-bass-val">0</span>
+            </div>
+            <div class="eq-item">
+                <label>Medios</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="left" data-band="mid"></div>
+                <span class="eq-val" id="eq-left-mid-val">0</span>
+            </div>
+            <div class="eq-item">
+                <label>Agudos</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="left" data-band="treble"></div>
+                <span class="eq-val" id="eq-left-treble-val">0</span>
+            </div>
+            <button class="eq-reset-btn reset-eq-btn" data-side="left"><i class="fas fa-undo"></i></button>
+            <span class="eq-note">Referencial: YouTube no permite filtrar su audio embebido</span>
+        </div>
+
+        <!-- Crossfader central -->
+        <div class="crossfade-area">
+            <div class="cross-label">
+                <span><i class="fas fa-volume-down" style="color:#ff0000;"></i> Izq</span>
+                <span>Crossfade</span>
+                <span>Der <i class="fas fa-volume-up" style="color:#ff0000;"></i></span>
+            </div>
+            <input type="range" min="0" max="100" value="50" class="volume-slider" id="crossfade-slider">
+            <div class="volume-display">
+                <span>Vol: <span id="volume-left-value">100%</span></span>
+                <span>Vol: <span id="volume-right-value">100%</span></span>
+            </div>
+        </div>
+
+        <!-- EQ Derecho -->
+        <div class="eq-side" id="eq-right">
+            <span class="eq-label">EQ Der</span>
+            <div class="eq-item">
+                <label>Bajos</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="right" data-band="bass"></div>
+                <span class="eq-val" id="eq-right-bass-val">0</span>
+            </div>
+            <div class="eq-item">
+                <label>Medios</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="right" data-band="mid"></div>
+                <span class="eq-val" id="eq-right-mid-val">0</span>
+            </div>
+            <div class="eq-item">
+                <label>Agudos</label>
+                <div class="eq-slider-wrap"><input type="range" class="eq-slider" min="-12" max="12" value="0" step="1" data-side="right" data-band="treble"></div>
+                <span class="eq-val" id="eq-right-treble-val">0</span>
+            </div>
+            <button class="eq-reset-btn reset-eq-btn" data-side="right"><i class="fas fa-undo"></i></button>
+            <span class="eq-note">Referencial: YouTube no permite filtrar su audio embebido</span>
+        </div>
+    </div>
+</div>
+
+<footer>
+    <p>Dual YouTube Player | Timer a la izquierda · Pitch a la derecha · EQ por canal · Crossfader central</p>
+</footer>
+
+<!-- API oficial de YouTube: necesaria para controlar volumen, velocidad, loop, etc. de verdad -->
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+    (function() {
+        // --- DOM refs ---
+        const searchLeft = document.getElementById('search-left');
+        const searchRight = document.getElementById('search-right');
+        const searchBtnLeft = document.getElementById('search-btn-left');
+        const searchBtnRight = document.getElementById('search-btn-right');
+        const resultsLeft = document.getElementById('results-left');
+        const resultsRight = document.getElementById('results-right');
+        const videoLeftContainer = document.getElementById('video-left-container');
+        const videoRightContainer = document.getElementById('video-right-container');
+        const crossfadeSlider = document.getElementById('crossfade-slider');
+        const volumeLeftValue = document.getElementById('volume-left-value');
+        const volumeRightValue = document.getElementById('volume-right-value');
+        const videoLeftInfo = document.getElementById('video-left-info');
+        const videoRightInfo = document.getElementById('video-right-info');
+        const leftStatus = document.getElementById('left-status');
+        const rightStatus = document.getElementById('right-status');
+        const apiKeyInput = document.getElementById('yt-api-key');
+        const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+        const infoApiKeyBtn = document.getElementById('info-api-key-btn');
+        const apiKeyStatus = document.getElementById('api-key-status');
+
+        // --- Videos de ejemplo ---
+        const EXAMPLE_VIDEOS = [
+            { id: '3JZ_D3ELwOQ', title: 'Música Relajante', channel: 'Relax Channel' },
+            { id: 'CaimKeDcudo', title: 'Música Energética', channel: 'Energy Music' },
+            { id: '0KSOMA3QBU0', title: 'Clásica para Estudiar', channel: 'Classical Hits' },
+            { id: 'JGwWNGJdvx8', title: 'Éxitos Pop', channel: 'Pop Music' },
+            { id: 'kXYiU_JCYtU', title: 'Lo-Fi Beats', channel: 'Lo-Fi Beats' },
+            { id: '9bZkp7q19f0', title: 'Gangnam Style', channel: 'PSY' },
+            { id: 'OPf0YbXqDm0', title: 'Uptown Funk', channel: 'MarkRonson' },
+        ];
+
+        // --- estado ---
+        let leftVideoId = '', rightVideoId = '';
+        let leftVideoTitle = '', rightVideoTitle = '';
+        let ytApiReady = false;
+        const players = { left: null, right: null };
+        const cuePoints = { left: 0, right: 0 };
+        const loopActive = { left: false, right: false };
+        const pitchSemitones = { left: 0, right: 0 };
+        const timerIntervals = { left: null, right: null };
+        const timerRemaining = { left: 0, right: 0 };
+
+        // ==========================================================
+        // CORRECCIÓN CLAVE: antes los videos se insertaban como un
+        // <iframe src="..."> plano, sin ninguna forma de controlarlos
+        // después. Ahora se crean con la API oficial de YouTube
+        // (YT.Player), lo que permite de verdad: volumen (crossfader),
+        // velocidad/pitch, detectar el final del video (loop real) y
+        // saltar a un punto (cue real).
+        // ==========================================================
+        window.onYouTubeIframeAPIReady = function () {
+            ytApiReady = true;
+            loadVideo('left', EXAMPLE_VIDEOS[0].id, EXAMPLE_VIDEOS[0].title);
+            loadVideo('right', EXAMPLE_VIDEOS[1].id, EXAMPLE_VIDEOS[1].title);
+        };
+
+        function loadVideo(section, videoId, videoTitle = 'Video') {
+            const container = section === 'left' ? videoLeftContainer : videoRightContainer;
+            const info = section === 'left' ? videoLeftInfo : videoRightInfo;
+            const status = section === 'left' ? leftStatus : rightStatus;
+
+            if (section === 'left') { leftVideoId = videoId; leftVideoTitle = videoTitle; }
+            else { rightVideoId = videoId; rightVideoTitle = videoTitle; }
+
+            if (!ytApiReady) {
+                // La API de YouTube todavía no terminó de cargar (se llamará
+                // automáticamente a loadVideo() de nuevo desde onYouTubeIframeAPIReady)
+                status.textContent = '● CARGANDO API';
+                return;
+            }
+
+            info.textContent = videoTitle;
+            info.style.display = 'block';
+            status.textContent = '● LOADING';
+
+            if (players[section]) {
+                try { players[section].destroy(); } catch (e) { /* noop */ }
+                players[section] = null;
+            }
+            container.innerHTML = '';
+            const playerDiv = document.createElement('div');
+            playerDiv.id = 'yt-player-' + section;
+            container.appendChild(playerDiv);
+
+            // Si la página se sirve por http/https, mandamos el origin explícito:
+            // ayuda a YouTube a validar la solicitud y evita el Error 153.
+            // (Si se abrió como file://, no se puede mandar un origin válido;
+            // en ese caso hay que usar un servidor local, ver aviso más abajo).
+            const playerVars = { autoplay: 1, controls: 1, rel: 0, playsinline: 1 };
+            if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+                playerVars.origin = window.location.origin;
+            }
+
+            players[section] = new YT.Player(playerDiv.id, {
+                videoId: videoId,
+                playerVars: playerVars,
+                events: {
+                    onReady: function () {
+                        status.textContent = '● LIVE';
+                        setTimeout(() => { info.style.display = 'none'; }, 3000);
+                        applyPitch(section);      // reaplica el pitch que ya estuviera ajustado
+                        updateCrossfadeVolume();  // reaplica el volumen del crossfader actual
+                    },
+                    onStateChange: function (e) {
+                        if (e.data === YT.PlayerState.ENDED && loopActive[section]) {
+                            players[section].seekTo(0, true);
+                            players[section].playVideo();
+                        }
+                    },
+                    onError: function (e) {
+                        status.textContent = '● ERROR';
+                        const codes = {
+                            2: 'ID de video inválido.',
+                            5: 'Error del reproductor HTML5.',
+                            100: 'Video no encontrado (puede haber sido eliminado o es privado).',
+                            101: 'El dueño del video no permite reproducirlo embebido en otros sitios.',
+                            150: 'El dueño del video no permite reproducirlo embebido en otros sitios.'
+                        };
+                        info.textContent = codes[e.data] || 'No se pudo cargar este video. Si ves "Error 153", revisa el aviso de arriba sobre abrir el archivo con un servidor local.';
+                        info.style.display = 'block';
+                    }
+                }
+            });
+        }
+
+        // --- Clave de la API de YouTube Data v3 ---
+        // Se guarda solo en el navegador (localStorage), nunca se envía a
+        // ningún servidor propio: las búsquedas van directo desde tu
+        // navegador a los servidores de Google.
+        //
+        // AVISO: esta clave por defecto queda visible en el código fuente del
+        // archivo (cualquiera que lo abra con "Ver código" puede verla). Está
+        // bien para uso personal, pero si compartes este archivo o lo subes a
+        // un sitio público, restríngela en Google Cloud Console (a "YouTube
+        // Data API v3" y, si puedes, a tu dominio) o bórrala de aquí.
+        const DEFAULT_API_KEY = 'AIzaSyAb3bSckjzMFNQqf0PnRbhQ9hiYSOTpX64';
+        const API_KEY_STORAGE = 'ytDjApiKey';
+
+        function getApiKey() {
+            const stored = (localStorage.getItem(API_KEY_STORAGE) || '').trim();
+            return stored || DEFAULT_API_KEY;
+        }
+
+        apiKeyInput.value = getApiKey();
+
+        saveApiKeyBtn.addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem(API_KEY_STORAGE, key);
+                apiKeyStatus.style.display = 'inline';
+                setTimeout(() => { apiKeyStatus.style.display = 'none'; }, 2500);
+            } else {
+                localStorage.removeItem(API_KEY_STORAGE);
+                apiKeyInput.value = DEFAULT_API_KEY;
+            }
+        });
+
+        infoApiKeyBtn.addEventListener('click', () => {
+            alert(
+                'Cómo conseguir una clave gratuita de la API de YouTube:\n\n' +
+                '1. Entra a https://console.cloud.google.com/\n' +
+                '2. Crea un proyecto nuevo (o usa uno existente)\n' +
+                '3. Ve a "APIs y servicios" → "Biblioteca", busca "YouTube Data API v3" y haz clic en Habilitar\n' +
+                '4. Ve a "APIs y servicios" → "Credenciales" → "Crear credenciales" → "Clave de API"\n' +
+                '5. Copia esa clave, pégala en el campo de arriba y presiona Guardar\n\n' +
+                'Es gratis hasta 10.000 unidades de cuota por día (cada búsqueda gasta 100, ' +
+                'o sea ~100 búsquedas diarias). La clave queda solo en tu navegador.\n\n' +
+                'Consejo de seguridad: en Google Cloud Console, edita la clave y restríngela a ' +
+                '"YouTube Data API v3" para que no pueda usarse en otras APIs si alguien la copia.'
+            );
+        });
+
+
+
+        // --- helpers de búsqueda ---
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str == null ? '' : String(str);
+            return div.innerHTML;
+        }
+
+        function localSearch(query) {
+            const filtered = EXAMPLE_VIDEOS.filter(v =>
+                v.title.toLowerCase().includes(query.toLowerCase()) ||
+                v.channel.toLowerCase().includes(query.toLowerCase())
+            );
+            return filtered.length ? filtered : EXAMPLE_VIDEOS.slice(0, 5);
+        }
+
+        function renderResults(section, container, videos, options = {}) {
+            if (!options.append) container.innerHTML = '';
+            videos.forEach(video => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                item.innerHTML = `<div class="result-title">${escapeHtml(video.title)}</div><div class="result-channel">${escapeHtml(video.channel)}</div>`;
+                item.addEventListener('click', () => {
+                    loadVideo(section, video.id, video.title);
+                    container.innerHTML = '';
+                    if (section === 'left') searchLeft.value = '';
+                    else searchRight.value = '';
+                });
+                container.appendChild(item);
+            });
+            if (options.localNotice) {
+                const info = document.createElement('div');
+                info.className = 'result-item';
+                info.style.background = '#1a2b3c';
+                info.innerHTML = `<div class="result-title">🔍 Búsqueda local (ejemplos)</div><div class="result-channel">Agrega tu clave de la API de YouTube arriba (🔑) para buscar en todo YouTube</div>`;
+                container.appendChild(info);
+            }
+        }
+
+        // --- búsqueda: real contra la YouTube Data API v3 si hay clave guardada;
+        // si no hay clave (o la búsqueda falla), cae en la búsqueda local sobre los ejemplos ---
+        async function searchVideos(section, query) {
+            query = query.trim();
+            if (!query) { alert('Ingresa un término de búsqueda'); return; }
+            const container = section === 'left' ? resultsLeft : resultsRight;
+            container.innerHTML = '<div class="result-item">Buscando...</div>';
+
+            const apiKey = getApiKey();
+            if (!apiKey) {
+                renderResults(section, container, localSearch(query), { localNotice: true });
+                return;
+            }
+
+            try {
+                const url = 'https://www.googleapis.com/youtube/v3/search' +
+                    '?part=snippet&type=video&maxResults=8' +
+                    '&q=' + encodeURIComponent(query) +
+                    '&key=' + encodeURIComponent(apiKey);
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (!resp.ok || data.error) {
+                    const reason = data && data.error && data.error.errors && data.error.errors[0] && data.error.errors[0].reason;
+                    let msg = (data && data.error && data.error.message) || 'Error desconocido de la API.';
+                    if (reason === 'keyInvalid' || resp.status === 400) msg = 'La clave de API no es válida.';
+                    if (reason === 'quotaExceeded') msg = 'Se agotó la cuota diaria gratuita de la API (vuelve mañana o crea otra clave).';
+                    if (reason === 'accessNotConfigured') msg = 'Falta habilitar "YouTube Data API v3" en tu proyecto de Google Cloud.';
+                    throw new Error(msg);
+                }
+
+                const videos = (data.items || [])
+                    .filter(item => item.id && item.id.videoId)
+                    .map(item => ({
+                        id: item.id.videoId,
+                        title: item.snippet.title,
+                        channel: item.snippet.channelTitle
+                    }));
+
+                if (!videos.length) {
+                    container.innerHTML = '<div class="result-item">Sin resultados para esa búsqueda.</div>';
+                    return;
+                }
+                renderResults(section, container, videos);
+            } catch (err) {
+                container.innerHTML = `<div class="result-item" style="background:#3b1d1d;color:#ffb4b4;">⚠️ ${escapeHtml(err.message)}</div>`;
+                renderResults(section, container, localSearch(query), { append: true, localNotice: true });
+            }
+        }
+
+        // --- crossfade: ahora sí controla el volumen real de cada reproductor ---
+        function updateCrossfadeVolume() {
+            const val = parseInt(crossfadeSlider.value);
+            let lv, rv;
+            if (val <= 50) { lv = 100; rv = (val / 50) * 100; }
+            else { rv = 100; lv = ((100 - val) / 50) * 100; }
+            lv = Math.round(lv);
+            rv = Math.round(rv);
+            volumeLeftValue.textContent = lv + '%';
+            volumeRightValue.textContent = rv + '%';
+            crossfadeSlider.style.background = `linear-gradient(to right, #ff0000 0%, #ff0000 ${val}%, #333 ${val}%, #333 100%)`;
+
+            if (players.left && players.left.setVolume) players.left.setVolume(lv);
+            if (players.right && players.right.setVolume) players.right.setVolume(rv);
+        }
+
+        // --- pitch: se traduce a velocidad de reproducción real de YouTube ---
+        // Nota honesta: YouTube no ofrece un "pitch shifter" puro. setPlaybackRate
+        // cambia velocidad Y tono a la vez (efecto "ardilla/vinilo"), que es lo
+        // más cercano a un pitch control que permite la API pública.
+        function applyPitch(section) {
+            const player = players[section];
+            if (!player || !player.setPlaybackRate) return;
+            const semitones = pitchSemitones[section];
+            let rate = Math.pow(2, semitones / 12);
+            rate = Math.min(2, Math.max(0.25, rate));
+            player.setPlaybackRate(rate);
+        }
+
+        document.querySelectorAll('.pitch-slider').forEach(slider => {
+            slider.addEventListener('input', function () {
+                const side = this.dataset.side;
+                const val = parseFloat(this.value);
+                pitchSemitones[side] = val;
+                document.getElementById(`pitch-${side}-val`).textContent = val.toFixed(1);
+                applyPitch(side);
+            });
+        });
+
+        // --- timer: cuenta regresiva real que pausa el video del lado al llegar a 0 ---
+        document.querySelectorAll('.timer-slider').forEach(slider => {
+            slider.addEventListener('input', function () {
+                const side = this.dataset.side;
+                if (!timerIntervals[side]) {
+                    document.getElementById(`timer-${side}-val`).textContent = parseInt(this.value) + 's';
+                }
+            });
+        });
+
+        document.querySelectorAll('.timer-toggle-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const side = this.dataset.side;
+                const slider = document.querySelector(`.timer-slider[data-side="${side}"]`);
+                const valSpan = document.getElementById(`timer-${side}-val`);
+
+                if (timerIntervals[side]) {
+                    clearInterval(timerIntervals[side]);
+                    timerIntervals[side] = null;
+                    this.innerHTML = '<i class="fas fa-play"></i> Iniciar';
+                    valSpan.textContent = parseInt(slider.value) + 's';
+                    return;
+                }
+
+                const seconds = parseInt(slider.value);
+                if (!seconds) { alert('Ajusta el timer a más de 0 segundos antes de iniciarlo.'); return; }
+
+                timerRemaining[side] = seconds;
+                this.innerHTML = '<i class="fas fa-stop"></i> Detener';
+                valSpan.textContent = timerRemaining[side] + 's';
+
+                timerIntervals[side] = setInterval(() => {
+                    timerRemaining[side]--;
+                    valSpan.textContent = Math.max(timerRemaining[side], 0) + 's';
+                    if (timerRemaining[side] <= 0) {
+                        clearInterval(timerIntervals[side]);
+                        timerIntervals[side] = null;
+                        btn.innerHTML = '<i class="fas fa-play"></i> Iniciar';
+                        if (players[side] && players[side].pauseVideo) players[side].pauseVideo();
+                        valSpan.style.color = '#ff0000';
+                        setTimeout(() => { valSpan.style.color = ''; }, 800);
+                    }
+                }, 1000);
+            });
+        });
+
+        // --- loop: ahora repite de verdad usando el evento ENDED de la API ---
+        document.querySelectorAll('.loop-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const side = this.dataset.side;
+                loopActive[side] = !loopActive[side];
+                this.classList.toggle('active', loopActive[side]);
+                this.innerHTML = loopActive[side] ? '<i class="fas fa-sync-alt"></i> ON' : '<i class="fas fa-sync-alt"></i> Loop';
+            });
+        });
+
+        // --- cue: clic = saltar al cue guardado · mayús+clic = fijar cue en el punto actual ---
+        document.querySelectorAll('.cue-btn').forEach(btn => {
+            btn.addEventListener('click', function (e) {
+                const side = this.dataset.side;
+                const player = players[side];
+                if (!player || !player.getCurrentTime) return;
+
+                if (e.shiftKey) {
+                    cuePoints[side] = player.getCurrentTime();
+                    this.style.background = '#ff0000';
+                    setTimeout(() => this.style.background = '', 300);
+                } else {
+                    player.seekTo(cuePoints[side] || 0, true);
+                }
+            });
+        });
+
+        // --- EQ individual por canal (referencial: ver nota en la interfaz) ---
+        document.querySelectorAll('.eq-slider').forEach(slider => {
+            slider.addEventListener('input', function () {
+                const side = this.dataset.side;
+                const band = this.dataset.band;
+                const val = this.value;
+                document.getElementById(`eq-${side}-${band}-val`).textContent = val;
+            });
+        });
+
+        document.querySelectorAll('.reset-eq-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const side = this.dataset.side;
+                const sliders = document.querySelectorAll(`.eq-slider[data-side="${side}"]`);
+                sliders.forEach(s => {
+                    s.value = 0;
+                    const band = s.dataset.band;
+                    document.getElementById(`eq-${side}-${band}-val`).textContent = '0';
+                });
+            });
+        });
+
+        // --- eventos de búsqueda ---
+        searchBtnLeft.addEventListener('click', () => searchVideos('left', searchLeft.value));
+        searchBtnRight.addEventListener('click', () => searchVideos('right', searchRight.value));
+        searchLeft.addEventListener('keypress', e => { if (e.key === 'Enter') searchVideos('left', searchLeft.value); });
+        searchRight.addEventListener('keypress', e => { if (e.key === 'Enter') searchVideos('right', searchRight.value); });
+
+        // --- crossfade event ---
+        crossfadeSlider.addEventListener('input', updateCrossfadeVolume);
+
+        // --- Aviso si el archivo se abrió directo desde el disco (file://) ---
+        // Es la causa más común del Error 153: sin un origen http(s) real,
+        // YouTube no siempre logra validar el reproductor embebido.
+        function checkFileProtocolWarning() {
+            if (window.location.protocol === 'file:') {
+                const banner = document.createElement('div');
+                banner.style.cssText = 'background:#3b1d1d;color:#ffb4b4;border:1px solid #7a2a2a;border-radius:8px;padding:8px 14px;margin:0 8px 8px 8px;font-size:0.78rem;line-height:1.5;';
+                banner.innerHTML = '⚠️ <strong>Estás abriendo este archivo directo desde el disco (file://).</strong> ' +
+                    'YouTube a veces rechaza el reproductor en ese modo con el "Error 153". ' +
+                    'Si algún video no carga, sirve esta carpeta con un servidor local, por ejemplo: ' +
+                    '<code>python -m http.server 8000</code> (o con Live Server de VS Code) y abre ' +
+                    '<code>http://localhost:8000/</code> en vez del archivo directamente.';
+                document.querySelector('.main-wrap').prepend(banner);
+            }
+        }
+
+        // --- INIT (todo lo que no depende de la API de YouTube) ---
+        document.addEventListener('DOMContentLoaded', function () {
+            checkFileProtocolWarning();
+            updateCrossfadeVolume();
+            document.querySelectorAll('.pitch-slider').forEach(s => {
+                document.getElementById(`pitch-${s.dataset.side}-val`).textContent = '0.0';
+            });
+            document.querySelectorAll('.timer-slider').forEach(s => {
+                document.getElementById(`timer-${s.dataset.side}-val`).textContent = '0s';
+            });
+            document.querySelectorAll('.loop-btn').forEach(b => {
+                b.classList.remove('active');
+                b.innerHTML = '<i class="fas fa-sync-alt"></i> Loop';
+            });
+            // Si la API de YouTube ya estaba cargada en caché antes de este evento,
+            // aseguramos igualmente el primer video de cada lado.
+            if (window.YT && window.YT.Player && !ytApiReady) {
+                window.onYouTubeIframeAPIReady();
+            }
+        });
+    })();
+</script>
+</body>
+</html>
